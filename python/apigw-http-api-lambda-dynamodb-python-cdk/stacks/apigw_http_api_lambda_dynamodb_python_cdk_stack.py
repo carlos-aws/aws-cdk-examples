@@ -9,6 +9,7 @@ from aws_cdk import (
     aws_apigateway as apigw_,
     aws_ec2 as ec2,
     aws_iam as iam,
+    aws_wafv2 as waf,
     Duration,
 )
 from constructs import Construct
@@ -67,7 +68,7 @@ class ApigwHttpApiLambdaDynamodbPythonCdkStack(Stack):
             ),
         )
 
-        # Create the Lambda function to receive the request
+        # Create the Lambda function with reserved concurrency (REL05-BP02)
         api_hanlder = lambda_.Function(
             self,
             "ApiHandler",
@@ -81,15 +82,79 @@ class ApigwHttpApiLambdaDynamodbPythonCdkStack(Stack):
             ),
             memory_size=1024,
             timeout=Duration.minutes(5),
+            reserved_concurrent_executions=50,  # REL05-BP02: Prevent account concurrency exhaustion
         )
 
         # grant permission to lambda to write to demo table
         demo_table.grant_write_data(api_hanlder)
         api_hanlder.add_environment("TABLE_NAME", demo_table.table_name)
 
-        # Create API Gateway
-        apigw_.LambdaRestApi(
+        # Create WAF WebACL with rate limiting (REL05-BP02)
+        web_acl = waf.CfnWebACL(
+            self,
+            "ApiGatewayWebACL",
+            scope="REGIONAL",
+            default_action=waf.CfnWebACL.DefaultActionProperty(allow={}),
+            rules=[
+                waf.CfnWebACL.RuleProperty(
+                    name="RateLimitRule",
+                    priority=1,
+                    statement=waf.CfnWebACL.StatementProperty(
+                        rate_based_statement=waf.CfnWebACL.RateBasedStatementProperty(
+                            limit=2000,  # 2000 requests per 5 minutes per IP
+                            aggregate_key_type="IP"
+                        )
+                    ),
+                    action=waf.CfnWebACL.RuleActionProperty(block={}),
+                    visibility_config=waf.CfnWebACL.VisibilityConfigProperty(
+                        sampled_requests_enabled=True,
+                        cloud_watch_metrics_enabled=True,
+                        metric_name="RateLimitRule"
+                    )
+                )
+            ],
+            visibility_config=waf.CfnWebACL.VisibilityConfigProperty(
+                sampled_requests_enabled=True,
+                cloud_watch_metrics_enabled=True,
+                metric_name="ApiGatewayWebACL"
+            )
+        )
+
+        # Create API Gateway with throttling configuration (REL05-BP02)
+        api = apigw_.LambdaRestApi(
             self,
             "Endpoint",
             handler=api_hanlder,
+            default_method_options=apigw_.MethodOptions(
+                throttling=apigw_.ThrottleSettings(
+                    rate_limit=100,    # 100 requests per second
+                    burst_limit=200    # 200 burst requests
+                )
+            )
+        )
+
+        # Create usage plan and API key for per-client throttling (REL05-BP02)
+        usage_plan = api.add_usage_plan(
+            "UsagePlan",
+            throttle=apigw_.ThrottleSettings(
+                rate_limit=50,     # 50 requests per second per client
+                burst_limit=100    # 100 burst requests per client
+            )
+        )
+
+        api_key = apigw_.ApiKey(
+            self,
+            "ApiKey",
+            description="API key for demo application"
+        )
+
+        usage_plan.add_api_key(api_key)
+        usage_plan.add_api_stage(stage=api.deployment_stage)
+
+        # Associate WAF with API Gateway (REL05-BP02)
+        waf.CfnWebACLAssociation(
+            self,
+            "WebACLAssociation",
+            resource_arn=api.deployment_stage.stage_arn,
+            web_acl_arn=web_acl.attr_arn
         )
