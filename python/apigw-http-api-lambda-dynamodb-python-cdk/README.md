@@ -70,20 +70,35 @@ $ cdk deploy --profile test
 ```
 
 ## After Deploy
-Navigate to AWS API Gateway console and test the API with below sample data 
-```json
-{
-    "year":"2023", 
-    "title":"kkkg",
-    "id":"12"
-}
+
+### Retrieve API Key
+After deployment, retrieve the API key value from AWS Systems Manager Parameter Store or API Gateway console:
+
+```bash
+aws apigateway get-api-keys --include-values --query "items[?name=='DemoApiKey'].value" --output text
 ```
 
-You should get below response 
+### Test the API
+Navigate to AWS API Gateway console or use curl to test the API. You must include the `x-api-key` header with your requests:
+
+```bash
+curl -X POST https://YOUR_API_ID.execute-api.REGION.amazonaws.com/prod/ \
+  -H "x-api-key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"year":"2023", "title":"kkkg", "id":"12"}'
+```
+
+You should get below response:
 
 ```json
 {"message": "Successfully inserted data!"}
 ```
+
+### Usage Plan Limits
+The API is protected with the following limits per API key:
+- Rate limit: 10 requests per second
+- Burst limit: 20 concurrent requests
+- Daily quota: 10,000 requests
 
 ## Cleanup 
 Run below script to delete AWS resources created by this sample stack.
