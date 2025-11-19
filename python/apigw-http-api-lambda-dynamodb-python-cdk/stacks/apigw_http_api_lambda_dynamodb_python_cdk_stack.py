@@ -162,6 +162,9 @@ class ApigwHttpApiLambdaDynamodbPythonCdkStack(Stack):
             self,
             "Endpoint",
             handler=api_hanlder,
+            default_method_options=apigw_.MethodOptions(
+                api_key_required=True
+            ),
             deploy_options=apigw_.StageOptions(
                 throttling_burst_limit=100,
                 throttling_rate_limit=50,
@@ -179,6 +182,31 @@ class ApigwHttpApiLambdaDynamodbPythonCdkStack(Stack):
                 ),
                 tracing_enabled=True,
             ),
+        )
+
+        # Create usage plan
+        usage_plan = api.add_usage_plan(
+            "UsagePlan",
+            name="StandardUsagePlan",
+            throttle=apigw_.ThrottleSettings(
+                rate_limit=10,
+                burst_limit=20
+            ),
+            quota=apigw_.QuotaSettings(
+                limit=10000,
+                period=apigw_.Period.DAY
+            )
+        )
+
+        # Create API key
+        api_key = api.add_api_key("ApiKey", api_key_name="DemoApiKey")
+
+        # Associate API key with usage plan
+        usage_plan.add_api_key(api_key)
+
+        # Add API stage to usage plan
+        usage_plan.add_api_stage(
+            stage=api.deployment_stage
         )
 
         # Associate WAF with API Gateway stage
